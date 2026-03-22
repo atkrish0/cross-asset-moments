@@ -2,6 +2,18 @@
 
 Comprehensive research repository for cross-asset higher-moment strategies, with current focus on a **systematic realized-skewness long-short model** across ETFs.
 
+## 0) Notebook Versions at a Glance
+
+| Version | File | Primary Goal | Data Source | Architecture | Recommended Use |
+|---|---|---|---|---|---|
+| `v1` | `experiments/cam_skewness_v1.ipynb` | Original working draft and early reference adaptation | Alpaca-style loader (legacy) | Single notebook | Historical baseline only |
+| `v2` | `experiments/cam_skewness_v2.ipynb` | Source-style replication in one notebook | `yfinance` | Single notebook (non-modular) | Closest to original webpage flow |
+| `v3` | `experiments/cam_skewness_v3.ipynb` | Production research workflow with richer diagnostics | `yfinance` | Modular (`experiments/cam_skewness_core`) | Best for ongoing research and extension |
+
+Quick guidance:
+- Use `v2` if you want continuity with the source article workflow.
+- Use `v3` if you want cleaner engineering, reusable code, and trader-focused diagnostics.
+
 ## 1) Project Purpose
 
 This project studies whether **cross-sectional realized skewness** contains tradable signal across multiple asset classes.
@@ -44,8 +56,9 @@ cross-asset-moments/
 └─ experiments/
    ├─ __init__.py
    ├─ cam_skewness_v1.ipynb                  # original notebook version
-   ├─ cam_skewness_v2.ipynb                  # current modular production notebook
-   ├─ cam_skewness_v2.md                     # detailed narrative companion
+   ├─ cam_skewness_v2.ipynb                  # single-notebook yfinance replication (non-modular)
+   ├─ cam_skewness_v3.ipynb                  # modular notebook (core logic extracted to .py files)
+   ├─ cam_skewness_v3.md                     # detailed narrative companion for modular approach
    ├─ cam_skewness_core/                     # extracted implementation modules
    │  ├─ __init__.py
    │  ├─ config.py                           # parameters + universe
@@ -171,7 +184,7 @@ S_t = \frac{1}{N} \sum_{i=t-N+1}^{t} \left(\frac{r_i - \mu_t}{\sigma_t}\right)^3
 
 ## 5) Analysis and Backtesting Outputs (Trader/PM View)
 
-The v2 notebook emphasizes practical diagnostics, not just cumulative return charts.
+The current notebooks include both a faithful single-notebook replication (`v2`) and a modular research stack (`v3`).
 
 ## 5.1 Data Integrity and Coverage
 - Universe summary (`listed`, `unique`, duplicates).
@@ -198,9 +211,9 @@ The v2 notebook emphasizes practical diagnostics, not just cumulative return cha
 - Monthly one-way turnover by sleeve.
 - Cost-adjusted scenario curves (5/10/20 bps) to approximate implementation drag.
 
-## 6) Notebook Design Philosophy (v2)
+## 6) Notebook Design Philosophy (v3 modular)
 
-`cam_skewness_v2.ipynb` is intentionally a **thin orchestration layer**:
+`cam_skewness_v3.ipynb` is intentionally a **thin orchestration layer**:
 - sectioned like a research report,
 - explains intent in markdown,
 - calls functional blocks from `experiments/cam_skewness_core`.
@@ -223,10 +236,12 @@ Python 3.10+ recommended with:
 - `ipykernel`
 
 ## 7.2 Run sequence
-1. Open `experiments/cam_skewness_v2.ipynb`.
+1. Choose notebook mode:
+   - `experiments/cam_skewness_v2.ipynb` for source-style single-notebook replication.
+   - `experiments/cam_skewness_v3.ipynb` for modular workflow + extended diagnostics.
 2. Restart kernel.
 3. Run cells top-to-bottom.
-4. Confirm first cell prints project root path.
+4. If using `v3`, confirm first import cell prints project root path.
 5. Review section outputs in order.
 
 ## 7.3 Operational notes
@@ -259,7 +274,7 @@ This section documents key failures found during development and the exact remed
 
 ## 10) What Was Added Beyond the Reference
 
-To make the strategy useful for actual portfolio workflow, v2 adds:
+To make the strategy useful for actual portfolio workflow, v3 adds:
 - modular codebase,
 - explicit data QA layer,
 - richer EDA and execution diagnostics,
@@ -277,9 +292,8 @@ To make the strategy useful for actual portfolio workflow, v2 adds:
 
 ## 12) Current Status
 
-`cam_skewness_v2.ipynb` is the current production notebook for skewness replication and analysis.
+Two maintained versions now coexist:
+- `cam_skewness_v2.ipynb`: single-notebook yfinance replication of the source webpage workflow.
+- `cam_skewness_v3.ipynb`: modular notebook + extracted Python modules (`experiments/cam_skewness_core`).
 
-It is:
-- aligned with the reference methodology at the core level,
-- improved in engineering robustness,
-- expanded for trader/PM interpretation.
+Use `v2` for source-style continuity and `v3` for cleaner research engineering and extended diagnostics.
