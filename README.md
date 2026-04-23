@@ -1,299 +1,618 @@
-# cross-asset-moments
+# Cross-Asset Moments: Realized Skewness Strategy (Living Technical Reference)
 
-Comprehensive research repository for cross-asset higher-moment strategies, with current focus on a **systematic realized-skewness long-short model** across ETFs.
+This document is the authoritative project reference for the cross-asset skewness strategy implemented in this repository.
 
-## 0) Notebook Versions at a Glance
+## 1) Problem Context and Objective
 
-| Version | File | Primary Goal | Data Source | Architecture | Recommended Use |
-|---|---|---|---|---|---|
-| `v1` | `experiments/cam_skewness_v1.ipynb` | Original working draft and early reference adaptation | Alpaca-style loader (legacy) | Single notebook | Historical baseline only |
-| `v2` | `experiments/cam_skewness_v2.ipynb` | Source-style replication in one notebook | `yfinance` | Single notebook (non-modular) | Closest to original webpage flow |
-| `v3` | `experiments/cam_skewness_v3.ipynb` | Production research workflow with richer diagnostics | `yfinance` | Modular (`experiments/cam_skewness_core`) | Best for ongoing research and extension |
+The project tests whether **cross-sectional realized skewness** can be used as a systematic long-short signal across liquid ETFs from multiple asset classes.
 
-Quick guidance:
-- Use `v2` if you want continuity with the source article workflow.
-- Use `v3` if you want cleaner engineering, reusable code, and trader-focused diagnostics.
+Core hypothesis:
 
-## 1) Project Purpose
+- Assets with relatively more negative recent skewness (within their asset class) may subsequently outperform assets with relatively more positive skewness.
 
-This project studies whether **cross-sectional realized skewness** contains tradable signal across multiple asset classes.
+Practical objective:
 
-Core research question:
-- If we rank assets by recent skewness within an asset class, does going **long negative-skew assets** and **short positive-skew assets** produce economically meaningful returns?
+- Build a bias-aware, monthly rebalanced, class-neutral signal portfolio.
+- Aggregate class sleeves into a global factor.
+- Evaluate whether returns are distinct from broad market and common equity style factors.
 
-The implementation is designed to be:
-- replicable,
-- auditable,
-- modular,
-- practical from a trader/PM perspective.
+Current implementation state:
 
-## 2) Ground-Truth Reference and Alignment
+- **Implemented (legacy):** `experiments/cam_skewness_v1.ipynb` (original draft; Alpaca-era style).
+- **Implemented (single-notebook source-style):** `experiments/cam_skewness_v2.ipynb` (yfinance replacement, monolithic flow).
+- **Implemented (modular production-style):** `experiments/cam_skewness_v3.ipynb` + `experiments/cam_skewness_core/*.py`.
 
-Primary reference implementation/inspiration:
-- [Cross Asset Skew - A Trading Strategy (Dean Markwick)](https://dm13450.github.io/2024/02/08/Cross-Asset-Skew-A-Trading-Strategy.html)
+---
 
-### Alignment summary
-The `v2` notebook follows the same core pipeline as the reference:
-1. Build rolling skew per asset.
-2. Use month-end skew cross-section by asset class.
-3. Rank and convert to class-neutral long/short weights.
-4. Activate weights on next trading day (anti-look-ahead).
-5. Aggregate class and global returns.
-6. Run alpha/beta and equity factor regressions.
+## 2) Conceptual Authority and Fidelity
 
-### Intentional differences
-- Data source is `yfinance` (free) instead of Alpaca.
-- Robust data QA, schema guards, and modularized code are added.
-- Additional trader-focused diagnostics are included (turnover, cost scenarios, drawdown).
+External conceptual authority:
 
-## 3) Repository Structure
+- [Cross Asset Skew - A Trading Strategy](https://dm13450.github.io/2024/02/08/Cross-Asset-Skew-A-Trading-Strategy.html)
 
-```text
-cross-asset-moments/
-├─ README.md
-├─ LICENSE
-├─ ref/
-└─ experiments/
-   ├─ __init__.py
-   ├─ cam_skewness_v1.ipynb                  # original notebook version
-   ├─ cam_skewness_v2.ipynb                  # single-notebook yfinance replication (non-modular)
-   ├─ cam_skewness_v3.ipynb                  # modular notebook (core logic extracted to .py files)
-   ├─ cam_skewness_v3.md                     # detailed narrative companion for modular approach
-   ├─ cam_skewness_core/                     # extracted implementation modules
-   │  ├─ __init__.py
-   │  ├─ config.py                           # parameters + universe
-   │  ├─ data_loader.py                      # yfinance ingestion + QA
-   │  ├─ signal.py                           # skew signal + monthly signal table
-   │  ├─ backtest.py                         # weight activation + returns + turnover
-   │  ├─ analytics.py                        # regression + performance stats
-   │  └─ plots.py                            # reusable visualization blocks
-   └─ misc/
-      ├─ cam_mean_v1.ipynb
-      ├─ cam_variance_v1.ipynb
-      └─ cam_kurtosis_v1.ipynb
+### 2.1 Core alignment with source workflow
+
+The implemented workflow matches the source at the strategy core:
+
+1. Compute rolling realized skew per asset.
+2. Take end-of-month skew snapshot.
+3. Rank cross-sectionally within each asset class.
+4. Convert ranks to class-neutral long-short weights.
+5. Activate next trading day (no look-ahead).
+6. Aggregate to class and then global portfolio.
+7. Run regression-based attribution (alpha/beta; equity factor extension).
+
+### 2.2 Intentional divergences
+
+- **Data vendor:** `yfinance` instead of Alpaca.
+- **Date coverage:** local runs can extend beyond source sample window (e.g., through 2026).
+- **Engineering controls:** stronger schema normalization and failure handling.
+- **Research diagnostics (v3):** added PM/trader analytics (turnover, cost scenarios, drawdown, breadth/utilization views).
+
+These are methodological extensions, not strategy-definition changes.
+
+### 2.3 Source-Concept Checklist (Explicit)
+
+The source article’s conceptual blocks are all represented in this project:
+
+1. **Skew definition and rolling estimator** using return mean/vol over a 256-day window.
+2. **Cross-sectional implementation** (relative skew within asset class, not absolute skew level trading).
+3. **Monthly rebalance signal timing** using end-of-month skew.
+4. **Look-ahead control** by activating weights on the next trading day.
+5. **Self-financed class portfolios** with long and short books normalized to +1/-1.
+6. **Class-level backtest vs class market proxy** (equal-weight average return in class).
+7. **Global aggregation with volatility scaling** to avoid high-vol sleeves dominating.
+8. **Alpha/beta attribution** via OLS of class strategy return vs class market return.
+9. **Equity factor decomposition** with `MTUM`, `VTV`, `VUG`, `VIG`.
+10. **Implementation caveat acknowledgement** that transaction costs/slippage are not explicitly modeled in the base replication.
+
+---
+
+## 3) Data Universe and Hyperparameters
+
+Primary config lives in:
+
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/config.py`
+
+Key parameters:
+
+- `LOOKBACK = 256`
+- `HISTORY_DAYS = 3650`
+- `VOL_TARGET = 0.10`
+
+Universe sleeves:
+
+- `Equity`, `FI`, `Commodities`, `Other`, `Ccy`
+
+### 3.1 Why SPY, GLD, AGG are repeatedly shown
+
+These three are used as **diagnostic anchors** in plots:
+
+- `SPY`: broad US equity beta proxy.
+- `GLD`: liquid commodity/precious metals proxy.
+- `AGG`: broad US investment-grade bond aggregate proxy.
+
+They are chosen for interpretability across risk regimes, not because the strategy is restricted to those names.
+
+Notebook anchor (`v3`):
+
+```python
+from experiments.cam_skewness_core.config import SAMPLE_TICKERS, SAMPLE_WEIGHT_TICKERS
+# SAMPLE_TICKERS = ["SPY", "GLD", "AGG"]
 ```
 
-## 4) End-to-End Methodology (What, How, Why)
+---
 
-## 4.1 Universe and Configuration
+## 4) Data Engineering Layer (Ingestion, Normalization, QA)
 
-### What was done
-- Defined ETF universe across 5 sleeves:
-  - Equity
-  - FI (fixed income)
-  - Commodities
-  - Other
-  - Ccy (currency)
-- Set key hyperparameters:
-  - `LOOKBACK = 256`
-  - `HISTORY_DAYS = 3650`
-  - `VOL_TARGET = 0.10`
+Implementation:
 
-### Why
-- 256 days approximates 1 trading year and stabilizes moment estimates.
-- Multi-asset setup tests signal transferability beyond a single class.
-- Vol target enables risk-balanced aggregation across sleeves.
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/data_loader.py`
 
-## 4.2 Data Ingestion
+### 4.1 Canonical schema
 
-### What was done
-- Implemented canonical loader in `data_loader.py`:
-  - pulls daily OHLC data from Yahoo,
-  - uses adjusted close where available for return continuity,
-  - computes `LogReturn`, `NextOpen`, and standardized schema,
-  - tracks failures (ticker-level diagnostics).
+Data are normalized to:
 
-### Why
-- Raw vendor outputs vary by ticker/version and can silently break research.
-- Canonical schema prevents downstream logic drift.
-- Explicit failures improve reproducibility and debugging.
+- `Date, Ticker, close, open, NextOpen, LogReturn, AssetClass`
 
-## 4.3 Signal Engineering (Realized Skew)
+Notebook-equivalent core logic (`v2`/`v3`):
 
-### What was done
-For each ticker:
-- compute rolling mean/std of log returns over `N=256`,
-- standardize daily return,
-- cube standardized return,
-- apply rolling mean to create skew signal.
+```python
+df["Date"] = pd.to_datetime(df["Date"]).dt.normalize()
+df["close"] = pd.to_numeric(df[close_col], errors="coerce")
+df["open"] = pd.to_numeric(df["Open"], errors="coerce")
+df["NextOpen"] = df["open"].shift(-1)
+df["LogReturn"] = np.log(df["close"] / df["close"].shift(1))
+```
 
-Formula used:
+### 4.2 Why this matters statistically
+
+- Cross-sectional ranking is very sensitive to column inconsistencies and timestamp drift.
+- `Adj Close` preference protects return continuity around distributions/splits.
+- Explicit empty-schema and failure capture reduce silent downstream bias.
+
+### 4.3 Implemented QA outputs
+
+- universe summary: listed vs unique tickers and duplicates.
+- ticker-level start/end/obs/missing-return rate.
+- load failure table by `(AssetClass, Ticker, Error)`.
+
+Notebook anchor (`v3`):
+
+```python
+all_data, failures = load_universe_yf(UNIVERSE, HISTORY_DAYS)
+quality = data_quality_summary(all_data)
+```
+
+---
+
+## 5) Signal Engineering: Realized Skewness
+
+Implementation:
+
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/signal.py::add_skew_features`
+
+### 5.1 Estimator definition
+
+For returns \(r_t\) and rolling window length \(N\):
 
 \[
-S_t = \frac{1}{N} \sum_{i=t-N+1}^{t} \left(\frac{r_i - \mu_t}{\sigma_t}\right)^3
+\mu_t = \frac{1}{N}\sum_{i=t-N+1}^{t} r_i,
+\qquad
+\sigma_t = \sqrt{\frac{1}{N-1}\sum_{i=t-N+1}^{t}(r_i-\mu_t)^2}
 \]
 
-### Why
-- Cubic moment captures asymmetry in return tails.
-- Cross-sectional ranking of skew is the actionable signal in reference methodology.
+Standardized return:
 
-## 4.4 Portfolio Construction and Rebalancing
+\[
+z_t = \frac{r_t - \mu_t}{\sigma_t}
+\]
 
-### What was done
-- Extracted month-end (`EOM`) skew per ticker and class.
-- Set activation date to next trading day per ticker.
-- Ranked assets within each `(Date, AssetClass)`.
-- Converted centered ranks into long/short weights.
-- Normalized so each class is self-financed:
-  - long sum = `+1`
-  - short sum = `-1`
-  - net = `0`
+Daily skew contribution:
 
-### Why
-- Prevent look-ahead bias.
-- Keep exposures class-neutral and comparable.
-- Isolate relative-value skew effect from outright directional beta.
+\[
+\text{SkewDay}_t = z_t^3
+\]
 
-## 4.5 Daily Return Aggregation
+Rolling realized skew signal:
 
-### What was done
-- Forward-filled active monthly weights to daily frequency.
-- Computed class portfolio return:
-  - `PortfolioReturn = sum(weight * LogReturn)`
-- Computed class market proxy:
-  - `MktReturn = mean(LogReturn)`
+\[
+\text{Skew}_t = \frac{1}{N}\sum_{i=t-N+1}^{t} \text{SkewDay}_i
+\]
 
-### Why
-- Strategy decisions are monthly, but PnL accrues daily.
-- Class benchmark required for alpha/beta attribution.
+Notebook anchor:
 
-## 4.6 Global Portfolio Construction
+```python
+grp = out.groupby("Ticker", sort=False)["LogReturn"]
+out["Avg"] = grp.transform(lambda s: s.rolling(window=lookback, min_periods=lookback).mean())
+out["Dev"] = grp.transform(lambda s: s.rolling(window=lookback, min_periods=lookback).std())
+out["SkewDay"] = ((out["LogReturn"] - out["Avg"]) / out["Dev"]) ** 3
+out["Skew"] = out.groupby("Ticker", sort=False)["SkewDay"].transform(
+    lambda s: s.rolling(window=lookback, min_periods=lookback).mean()
+)
+```
 
-### What was done
-- Computed rolling class volatilities.
-- Vol-normalized class strategy and market returns.
-- Averaged normalized class returns into global factor.
+### 5.2 Interpretation
 
-### Why
-- Equal notional weighting can over-concentrate risk in volatile sleeves.
-- Vol normalization makes cross-class aggregation risk-aware.
+- Signal is expected to be jumpy due to cubic amplification of tail moves.
+- Large crisis periods (e.g., 2020) create strong asymmetry and regime shifts in rolling skew.
 
-## 4.7 Attribution and Factor Analysis
+---
 
-### What was done
-1. Class-level OLS:
-   \[
-   r^{strat}_{t} = \alpha + \beta \cdot r^{mkt}_{t} + \epsilon_t
-   \]
-2. Equity multi-factor OLS with proxies:
-   - `MktReturn`, `MTUM`, `VTV`, `VUG`, `VIG`
+## 6) Cross-Sectional Portfolio Construction
 
-### Why
-- Distinguish true alpha from repackaged market/factor exposure.
-- Assess how much skew returns are explained by common style premia.
+Implementation:
 
-## 5) Analysis and Backtesting Outputs (Trader/PM View)
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/signal.py::build_monthly_signal_table`
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/signal.py::add_rank_weights`
 
-The current notebooks include both a faithful single-notebook replication (`v2`) and a modular research stack (`v3`).
+### 6.1 Monthly signal extraction and activation date
 
-## 5.1 Data Integrity and Coverage
-- Universe summary (`listed`, `unique`, duplicates).
-- Ticker-level history coverage and missingness.
-- Class utilization diagnostics.
+For each `(Month, AssetClass, Ticker)`:
 
-## 5.2 Signal Diagnostics
-- Sample cumulative return paths (SPY/GLD/AGG).
-- Rolling skew traces (regime sensitivity and jump behavior).
-- Skew distribution by asset class.
+- `EOMSkew = last(Skew)` at month-end.
+- `NextDate = next trading day` (activation date).
 
-## 5.3 Execution Diagnostics
-- Latest commodity skew cross-section bar chart.
-- Latest commodity portfolio weights bar chart.
-- Sample ticker weight history (SPY/AGG/GLD).
+### 6.2 Rank-to-weight transform
 
-## 5.4 Performance Diagnostics
-- Class-level cumulative strategy returns.
-- Class-level strategy vs market panel comparison.
-- Global strategy vs market cumulative comparison.
-- Global strategy drawdown profile.
+Within each `(Date, AssetClass)` cross-section, with rank \(\operatorname{rank}(\cdot)\):
 
-## 5.5 Implementation Friction Diagnostics
-- Monthly one-way turnover by sleeve.
-- Cost-adjusted scenario curves (5/10/20 bps) to approximate implementation drag.
+\[
+w_i^{raw} = \operatorname{rank}(\text{EOMSkew}_i; \text{descending}) - \frac{n+1}{2}
+\]
 
-## 6) Notebook Design Philosophy (v3 modular)
+Normalize to balanced long-short exposure:
 
-`cam_skewness_v3.ipynb` is intentionally a **thin orchestration layer**:
-- sectioned like a research report,
-- explains intent in markdown,
-- calls functional blocks from `experiments/cam_skewness_core`.
+\[
+w_i = \frac{w_i^{raw}}{\sum_j |w_j^{raw}|/2}
+\]
 
-Benefits:
-- cleaner notebook,
-- easier debugging,
-- reusable code for batch/reruns,
-- fewer stale-cell and copy/paste errors.
+This enforces:
 
-## 7) How to Run
+\[
+\sum_{i: w_i>0} w_i = +1,
+\qquad
+\sum_{i: w_i<0} w_i = -1,
+\qquad
+\sum_i w_i = 0
+\]
 
-## 7.1 Environment requirements
-Python 3.10+ recommended with:
-- `numpy`
-- `pandas`
-- `matplotlib`
-- `statsmodels`
-- `yfinance`
-- `ipykernel`
+Notebook anchor:
 
-## 7.2 Run sequence
-1. Choose notebook mode:
-   - `experiments/cam_skewness_v2.ipynb` for source-style single-notebook replication.
-   - `experiments/cam_skewness_v3.ipynb` for modular workflow + extended diagnostics.
-2. Restart kernel.
-3. Run cells top-to-bottom.
-4. If using `v3`, confirm first import cell prints project root path.
-5. Review section outputs in order.
+```python
+monthly_vals["SkewWeightRaw"] = monthly_vals.groupby(["Date", "AssetClass"])["EOMSkew"].transform(
+    lambda s: s.rank(ascending=False, method="average") - ((len(s) + 1) / 2)
+)
+```
 
-## 7.3 Operational notes
-- Internet access is required for Yahoo pulls.
-- Results can drift over time as data updates.
-- Vendor differences vs Alpaca are expected.
+---
 
-## 8) Major Bugs/Errors Encountered and Fixes
+## 7) Execution Mapping and Daily PnL Assembly
 
-This section documents key failures found during development and the exact remediation.
+Implementation:
 
-| Issue | Symptom | Root Cause | Fix Implemented |
-|---|---|---|---|
-| Import path failure | `ModuleNotFoundError: No module named 'experiments'` in notebook | Kernel started from a cwd not containing repo root on `sys.path` | Added root-discovery + `sys.path` bootstrap in import cell; added `experiments/__init__.py` |
-| Empty universe shape failure | `KeyError: 'Ticker'` when sorting loaded data | No frames loaded; empty DataFrame without expected schema | Loader now returns canonical empty schema and explicit diagnostics before downstream steps |
-| Yahoo schema drift | Missing expected columns for some downloads | `yfinance` outputs differ by version/ticker (MultiIndex, Date/Datetime differences) | Added robust schema normalization in `clean_yf` |
-| Signal-step column loss | `KeyError: 'Ticker'` in diagnostics after skew construction | `groupby.apply` behavior causing schema/index instability in some pandas contexts | Replaced with `groupby.transform`-based feature construction |
-| Stale notebook state confusion | Old logic running despite file edits | Kernel retained previous function definitions | Added version stamps/explicit restart guidance; modularized logic into `.py` to reduce cell-state drift |
-| Hardcoded provider credentials (legacy path) | Security/reproducibility risk | Prior Alpaca-style inline secrets | Removed provider-coupled secrets from working pipeline; standardized on free `yfinance` |
-| Flat/uninformative breadth visualization | Constant horizontal lines with low informational value | Breadth mostly static over time in this universe | Replaced with min/median/max coverage view + yearly utilization heatmap |
-| Global comparator scaling ambiguity | Hard-to-interpret market comparator behavior | Scaling market leg by strategy vol can distort comparator magnitude | Made scaling logic explicit and configurable; defaulted to market-vol scaling in modular backtest helper |
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/backtest.py::apply_monthly_weights_to_daily`
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/backtest.py::compute_asset_class_returns`
 
-## 9) Key Assumptions and Limitations
+### 7.1 Anti-look-ahead mechanism
 
-- No explicit transaction-cost model in base strategy return (separate scenario analysis provided).
-- No borrow constraints/locate availability modeling.
-- ETF survivorship/history limitations from free data source.
-- Equal-weight class benchmark is a practical proxy, not a full canonical factor model.
-- OLS defaults are sensitive to residual assumptions; robust covariance not yet default.
+- Monthly weight is attached to `NextDate`, then forward-filled daily within ticker.
 
-## 10) What Was Added Beyond the Reference
+### 7.2 Return equations
 
-To make the strategy useful for actual portfolio workflow, v3 adds:
-- modular codebase,
-- explicit data QA layer,
-- richer EDA and execution diagnostics,
-- turnover and cost sensitivity,
-- cleaner attribution tables,
-- robust sanity assertions for neutrality constraints.
+Per ticker-day:
 
-## 11) Future Improvements
+\[
+r_{i,t}^{w} = w_{i,t}^{FF} \cdot r_{i,t}
+\]
 
-- Add robust/HAC errors to regressions.
-- Add purged walk-forward or anchored out-of-sample validation.
-- Add explicit slippage and spread model by asset class.
-- Add rank decay and holding-period sensitivity.
-- Add scenario dashboard for leverage and class risk budgets.
+Per class-day:
 
-## 12) Current Status
+\[
+R_{c,t}^{strat} = \sum_{i \in c} r_{i,t}^{w},
+\qquad
+R_{c,t}^{mkt} = \frac{1}{|c|}\sum_{i \in c} r_{i,t}
+\]
 
-Two maintained versions now coexist:
-- `cam_skewness_v2.ipynb`: single-notebook yfinance replication of the source webpage workflow.
-- `cam_skewness_v3.ipynb`: modular notebook + extracted Python modules (`experiments/cam_skewness_core`).
+Notebook anchor:
 
-Use `v2` for source-style continuity and `v3` for cleaner research engineering and extended diagnostics.
+```python
+all_data_weights["WeightedReturn"] = all_data_weights["SkewWeightFF"] * all_data_weights["LogReturn"]
+asset_portfolios = all_data_weights.groupby(["Date", "AssetClass"], as_index=False).agg(
+    PortfolioReturn=("WeightedReturn", "sum"),
+    MktReturn=("LogReturn", "mean")
+)
+```
+
+### 7.3 Important fix in v2
+
+A key correction was applied to avoid false zero-returns before weights activate:
+
+- use `sum(min_count=1)` and active-name count,
+- set class `PortfolioReturn` to `NaN` when no active names.
+
+This prevents volatility understatement and downstream scaling explosions.
+
+---
+
+## 8) Risk Normalization and Global Factor Construction
+
+Implementation:
+
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/backtest.py::compute_global_factor`
+
+### 8.1 Vol targeting logic
+
+For each class \(c\):
+
+\[
+\hat\sigma^{strat}_{c,t} = \text{rolling-std}(R^{strat}_{c,t}),
+\qquad
+\hat\sigma^{mkt}_{c,t} = \text{rolling-std}(R^{mkt}_{c,t})
+\]
+
+Normalized returns:
+
+\[
+\tilde R^{strat}_{c,t} = \sigma^* \frac{R^{strat}_{c,t}}{\hat\sigma^{strat}_{c,t}},
+\qquad
+\tilde R^{mkt}_{c,t} = \sigma^* \frac{R^{mkt}_{c,t}}{\hat\sigma^{mkt}_{c,t}}
+\]
+
+Global aggregates:
+
+\[
+R_t^{global} = \frac{1}{C}\sum_{c=1}^{C}\tilde R^{strat}_{c,t},
+\qquad
+R_t^{global,mkt} = \frac{1}{C}\sum_{c=1}^{C}\tilde R^{mkt}_{c,t}
+\]
+
+Notebook anchor:
+
+```python
+gcf = (
+    asset_portfolios.dropna(subset=["NormReturn", "NormMarketReturn"])
+    .groupby("Date", as_index=False)
+    .agg(Return=("NormReturn", "mean"), MktReturn=("NormMarketReturn", "mean"))
+)
+```
+
+### 8.2 Why this step exists
+
+Without vol normalization, high-vol sleeves dominate global PnL mechanically. The normalization makes the cross-class blend risk-aware instead of notional-weighted.
+
+### 8.3 Exact Source vs Local Scaling Detail
+
+The source article scales both strategy and market sleeves by the **same class volatility estimate derived from strategy returns**:
+
+\[
+\tilde R^{mkt}_{c,t,\text{source}} = \sigma^* \frac{R^{mkt}_{c,t}}{\hat\sigma^{strat}_{c,t}}
+\]
+
+In this repository:
+
+- `v2` is intended to remain as close as possible to source-style replication.
+- `v3` supports a cleaner implementation where market can be scaled by its own sleeve volatility (default in modular helper), with an explicit switch available:
+
+```python
+compute_global_factor(..., scale_market_with_strategy_vol=True)
+```
+
+This difference can materially change the shape/level of the global market comparison line and should always be stated when interpreting results.
+
+---
+
+## 9) Statistical Attribution Layer
+
+Implementation:
+
+- `/Users/atheeshkrishnan/AK/DEV/cross-asset-moments/experiments/cam_skewness_core/analytics.py`
+
+### 9.1 Class alpha/beta model
+
+For each asset class:
+
+\[
+R^{strat}_{c,t} = \alpha_c + \beta_c R^{mkt}_{c,t} + \epsilon_{c,t}
+\]
+
+Estimated by OLS (`statsmodels`).
+
+### 9.2 Equity factor extension
+
+On the equity sleeve:
+
+\[
+R^{strat}_{eq,t} = \alpha + \beta_m R^{mkt}_{eq,t} + \beta_{MTUM} f_{MTUM,t} + \beta_{VTV} f_{VTV,t} + \beta_{VUG} f_{VUG,t} + \beta_{VIG} f_{VIG,t} + \epsilon_t
+\]
+
+Notebook anchor:
+
+```python
+reg_cols = ["MktReturn", "MTUM", "VTV", "VUG", "VIG"]
+X = sm.add_constant(reg_df[reg_cols])
+y = reg_df["PortfolioReturn"]
+model = sm.OLS(y, X).fit()
+```
+
+Observed from current run (as shared in notebook outputs):
+
+- `R^2 ≈ 0.116` for equity multi-factor regression.
+- Intercept not statistically significant.
+- Several style exposures statistically significant.
+
+Interpretation: equity sleeve return is only partially explained by these style factors; residual component remains.
+
+---
+
+## 10) Trader/PM Analytics in Current Implementation
+
+Primary analytics in `v3` (plus selected `v1`-inspired charts):
+
+- latest commodity skew cross-section bars.
+- latest commodity rank-weight bars.
+- sample ticker weight histories.
+- class cumulative strategy curves.
+- class strategy-vs-market panels.
+- global factor vs global market.
+- drawdown curve.
+- monthly turnover by class.
+- cost-adjusted cumulative return scenarios.
+- breadth/utilization diagnostics (improved from flat-line view).
+
+Interpretive emphasis:
+
+- signal efficacy by sleeve, not only globally.
+- regime behavior and concentration risk.
+- implementation drag (turnover/cost) before claiming deployability.
+
+---
+
+## 11) Section-by-Section Outcome Snapshot (from current outputs)
+
+Based on generated notebook outputs shared during validation (data-vendor and sample-window dependent):
+
+1. **Data and schema checks passed** with expected columns and non-empty universe pull.
+2. **Skew feature creation behaved as expected** (large negative excursions around stress periods).
+3. **Weight neutrality checks are exact** (`long_sum=+1`, `short_sum=-1`, `net≈0` across groups).
+4. **Class-level performance is heterogeneous** (commodity sleeve was strongest in the shown run, other sleeves mixed).
+5. **Global factor is sensitive to scaling details**, and was the main area where implementation bugs materially changed chart shape.
+6. **Attribution shows low-to-moderate explanatory power in shown runs**, with equity sleeve having meaningful factor loadings but not fully explained return.
+
+---
+
+## 12) Major Bugs/Errors and Fixes
+
+### 12.1 `KeyError: 'Ticker'` during loader/diagnostics (v2)
+
+Symptom:
+
+- downstream filtering like `all_data[all_data['Ticker'] == "SPY"]` failed.
+
+Root cause:
+
+- transformations via unstable `groupby.apply` paths could drop/reshape schema.
+
+Fix:
+
+- switched to `groupby.transform` pattern for rolling features to preserve original schema.
+- hardened loader to always return canonical columns, including empty-schema fallback.
+
+### 12.2 `ModuleNotFoundError: No module named 'experiments'` (v3)
+
+Root cause:
+
+- notebook kernel cwd/path not guaranteeing project root import visibility.
+
+Fix:
+
+- added project-root `sys.path` bootstrap in v3 import cell.
+- added `experiments/__init__.py`.
+
+### 12.3 Distorted global factor chart (v2)
+
+Symptom:
+
+- global skew cumulative line unrealistically high versus expected scale.
+
+Root cause:
+
+- pre-activation periods were treated as zero strategy return (instead of missing), shrinking rolling vol denominator and inflating normalized returns.
+
+Fix:
+
+- class aggregation now uses active-name guard and `sum(min_count=1)`.
+- missing pre-activation periods excluded from scaling/aggregation.
+
+### 12.4 Over-simplistic breadth plot
+
+Symptom:
+
+- flat lines conveyed little information.
+
+Fix:
+
+- replaced with richer breadth diagnostics (range/heatmap/stat summaries) in v3 analytics flow.
+
+---
+
+## 13) Current Caveats and Assumptions
+
+Material caveats affecting interpretation:
+
+- `yfinance` is convenient but not institutional-grade point-in-time data.
+- no transaction-level fill simulation (slippage/latency/borrow/fees not modeled endogenously in core replication).
+- benchmark definitions are equal-weight class proxies, not tradable total-return composites.
+- regressions use OLS with standard errors; no HAC/Newey-West corrections by default.
+- duplicate ticker entries in raw universe definition are deduplicated at load time.
+- inferred execution assumption is effectively frictionless rebalance at/near next session open (source article similarly notes trading-cost simplification).
+
+Interpret results as **research-factor evidence**, not directly executable live PnL.
+
+---
+
+## 14) Why These Methods Were Chosen
+
+- **Rolling skew estimator:** directly targets asymmetry, the stated signal hypothesis.
+- **Cross-sectional rank construction:** robust against level differences across assets.
+- **Class-neutral normalization:** isolates relative skew effect from class directionality.
+- **Monthly rebalance with next-day activation:** practical cadence and no look-ahead.
+- **Vol targeting before global aggregation:** controls cross-sleeve risk concentration.
+- **Regression attribution:** separates potential alpha from known market/style exposures.
+
+---
+
+## 15) Interview-Ready Project Narrative
+
+### Situation
+
+The project started as a research replication exercise of a published cross-asset skewness strategy, but the original implementation context and data vendor assumptions were different from the local setup. The practical challenge was to preserve strategy logic while migrating to a free and accessible data source (`yfinance`) and still produce trustworthy inference for portfolio construction and attribution.
+
+### Task
+
+Build a technically defensible end-to-end research pipeline that:
+
+- reproduces the core skewness signal and monthly cross-sectional backtest mechanics,
+- enforces look-ahead-safe execution timing,
+- supports attribution (alpha/beta and multi-factor equity decomposition),
+- and is robust enough to discuss in a technical interview from both quant and engineering perspectives.
+
+### Action
+
+#### 1. Replication and signal implementation
+
+- Implemented rolling realized skewness using a two-layer rolling transformation:
+  - rolling mean/std on daily log returns,
+  - rolling mean of cubic standardized returns.
+- Preserved source-consistent construction:
+  - month-end signal extraction,
+  - cross-sectional rank conversion to class-neutral long/short weights,
+  - next-trading-day activation.
+
+#### 2. Data engineering hardening
+
+- Built canonical ingestion/cleaning logic to normalize inconsistent Yahoo schemas (multi-index columns, date naming differences, adjusted close handling, duplicates, numeric coercion).
+- Added explicit failure diagnostics (`AssetClass`, `Ticker`, `Error`) and coverage summaries to avoid silent data loss.
+
+#### 3. Backtest correctness and risk normalization
+
+- Implemented daily return mapping from monthly weights via activation-date merge and within-ticker forward fill.
+- Added a critical guard for pre-activation periods (no active weights):
+  - prevent zero-imputation from contaminating class return series,
+  - avoid denominator collapse in volatility scaling.
+- Constructed global factor via class-level volatility normalization and equal-risk aggregation.
+
+#### 4. Statistical attribution and explainability
+
+- Ran per-class OLS regressions:
+  - `PortfolioReturn ~ const + MktReturn`.
+- Extended equity sleeve with style-factor regression:
+  - `PortfolioReturn ~ const + MktReturn + MTUM + VTV + VUG + VIG`.
+- Reported coefficients, p-values, confidence intervals, and fit diagnostics for interpretability.
+
+#### 5. Engineering evolution for maintainability
+
+- Converted notebook-heavy flow into a modular architecture (`v3`) with separable concerns:
+  - `data_loader`, `signal`, `backtest`, `analytics`, `plots`.
+- Kept a source-style single-notebook variant (`v2`) for conceptual parity and easier auditability.
+- Resolved critical implementation issues:
+  - `KeyError: 'Ticker'` schema drift,
+  - import path failures for `experiments` package,
+  - distorted global-factor chart from invalid early-period aggregation.
+
+### Result
+
+- Delivered two production-usable research artifacts:
+  - `v2`: source-style single-notebook replication with yfinance,
+  - `v3`: modular, extensible research framework with richer diagnostics.
+- Achieved exact weight neutrality sanity checks at rebalance level (`long=+1`, `short=-1`, `net≈0`).
+- Produced stable attribution outputs that are interpretable in interview settings (factor exposures, significance, partial explanatory power rather than overclaimed alpha).
+- Improved confidence in result validity by explicitly handling failure modes that can bias backtests (schema mismatch, missing activation states, scaling artifacts).
+
+### Technical Interview Talking Points
+
+- **Modeling depth:** why third-moment asymmetry is modeled and why rank-based cross-sectional construction is robust.
+- **Bias control:** next-day activation and handling of missing-weight periods.
+- **Validation discipline:** neutrality checks, class-vs-market comparisons, drawdown/turnover/cost lenses.
+- **Attribution literacy:** distinguishing standalone signal from market/style exposures via regression diagnostics.
+- **Engineering quality:** migration from monolithic notebook to reusable module stack without changing economic logic.
+
+---
+
+## 16) Living-Document Update Rules
+
+When the project evolves, update this README by preserving the same flow:
+
+1. data generation + QA
+2. signal math
+3. portfolio mapping
+4. risk scaling
+5. attribution
+6. outcomes and caveats
+7. bug/fix log
+
+Any future method changes should document:
+
+- exact equation or transformation changed,
+- code location (`notebook cell` and/or `module function`),
+- expected effect on interpretation.
